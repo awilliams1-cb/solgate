@@ -1,5 +1,12 @@
+import ejs from "ejs";
 import { parseAbiItem } from "viem";
 import type { GatelangType, GateSource, ParsedGate } from "./types";
+import {
+  LIBRARY_TEMPLATE,
+  LIST_PREAMBLE_TEMPLATE,
+  LIST_SCALAR_FN_TEMPLATE,
+  SERIALIZE_BODY_TEMPLATE,
+} from "./template.ts";
 
 function gateTypeToSolidity(t: GatelangType): string {
   if (t.kind === "primitive") {
@@ -47,14 +54,6 @@ interface CollectedStruct {
   definition: string;
 }
 
-/**
- * Maps a single field type to its Solidity type name, given the parent struct's
- * name and the field's index.  Does not emit anything.
- *
- * For primitive/list-of-primitive: delegates to gateTypeToSolidity.
- * For tuple fields: returns the nested struct name (${parentName}Field${i}).
- * For list-of-tuple fields: returns the nested struct name with [] suffix.
- */
 function resolveFieldSolidityType(
   f: GatelangType,
   parentName: string,
@@ -70,10 +69,6 @@ function resolveFieldSolidityType(
   return "bytes";
 }
 
-/**
- * Recursively collects all struct definitions needed for a tuple type, appending
- * them to `out` in post-order (children before parents).
- */
 function collectStructDefs(
   parentName: string,
   fields: GatelangType[],
@@ -105,23 +100,15 @@ function collectStructDefs(
 // ─── Recursive serializer ───
 
 interface SerializeLine {
-  indent: number;  // extra indentation levels (×4 spaces) beyond the base 16-space indent
-  content: string; // the raw text on this line, without leading spaces or newlines
+  indent: number;
+  content: string;
 }
 
 interface SerializeFragment {
-  preamble: string;        // code to emit before the string.concat call (e.g. inner loops)
-  lines: SerializeLine[];  // token lines for the string.concat arguments
+  preamble: string;
+  lines: SerializeLine[];
 }
 
-/**
- * Recursively builds the string.concat token lines and any preamble code
- * (inner loops for list-typed fields) needed to serialize a single value of
- * the given type.
- *
- * `accessor` is the Solidity expression for the value (e.g. "entries[i].field2").
- * `depth` tracks loop nesting to produce unique loop variable names (_i1, _i2, …).
- */
 function generateSerializeExpr(
   fieldType: GatelangType,
   accessor: string,
@@ -165,13 +152,8 @@ function generateSerializeExpr(
     const elemFrag = generateSerializeExpr(elemType, elemAccessor, depth + 1);
 
     const elemContent = elemFrag.lines.map((l) => l.content).join(", ");
-    let preamble = elemFrag.preamble;
-    preamble += `            string memory ${listVar} = "[";\n`;
-    preamble += `            for (uint256 ${loopVar} = 0; ${loopVar} < ${accessor}.length; ${loopVar}++) {\n`;
-    preamble += `                if (${loopVar} > 0) ${listVar} = string.concat(${listVar}, ",");\n`;
-    preamble += `                ${listVar} = string.concat(${listVar}, ${elemContent});\n`;
-    preamble += `            }\n`;
-    preamble += `            ${listVar} = string.concat(${listVar}, "]");\n`;
+    const preamble = elemFrag.preamble +
+      ejs.render(LIST_PREAMBLE_TEMPLATE, { listVar, loopVar, accessor, elemContent });
 
     return { preamble, lines: [{ indent: 0, content: listVar }] };
   }
@@ -181,50 +163,40 @@ function generateSerializeExpr(
 
 // ─── Body generator ───
 
-function generateSerializeBody(
-  sourceName: string,
-  sName: string,
-  fields: GatelangType[],
-  callSig?: string
-): string {
-  const fieldNames = extractFieldNames(fields.length, callSig);
-  const varName = "entries";
-  const baseIndent = "                "; // 16 spaces
-
-  const fragments = fields.map((f, i) =>
-    generateSerializeExpr(f, `${varName}[i].${fieldNames[i]}`, 1)
-  );
-
-  let body = "";
-  body += `        string memory json = "[";\n`;
-  body += `        for (uint256 i = 0; i < ${varName}.length; i++) {\n`;
-  body += `            if (i > 0) json = string.concat(json, ",");\n`;
-
-  for (const frag of fragments) {
-    if (frag.preamble) body += frag.preamble;
-  }
-
-  body += `            json = string.concat(json, "["`;
-
+function buildConcatCall(fragments: SerializeFragment[]): string {
+  const baseIndent = "                ";
+  let call = `            json = string.concat(json, "["`;
   fragments.forEach((frag, fieldIdx) => {
     const isLastField = fieldIdx === fragments.length - 1;
     frag.lines.forEach((line, lineIdx) => {
       const isLastLine = lineIdx === frag.lines.length - 1;
       const separator = !isLastField && isLastLine ? `, ","` : "";
       const indentStr = baseIndent + "    ".repeat(line.indent);
-      body += `,\n${indentStr}${line.content}${separator}`;
+      call += `,\n${indentStr}${line.content}${separator}`;
     });
   });
-
-  body += `,\n            "]");\n`;
-  body += `        }\n`;
-  body += `        json = string.concat(json, "]");\n`;
-  body += `        gate.mockRaw("${sourceName}", json);`;
-
-  return body;
+  call += `,\n            "]");\n`;
+  return call;
 }
 
-// ─── Scalar/list-scalar helpers (unchanged) ───
+function generateSerializeBody(
+  sourceName: string,
+  fields: GatelangType[],
+  callSig?: string
+): string {
+  const varName = "entries";
+  const fragments = fields.map((f, i) =>
+    generateSerializeExpr(f, `${varName}[i].${extractFieldNames(fields.length, callSig)[i]!}`, 1)
+  );
+  return ejs.render(SERIALIZE_BODY_TEMPLATE, {
+    varName,
+    sourceName,
+    preambles: fragments.map((f) => f.preamble).join(""),
+    concatCall: buildConcatCall(fragments),
+  });
+}
+
+// ─── Scalar mock helper ───
 
 function generateScalarMockFn(source: GateSource): string {
   const solType = gateTypeToSolidity(source.type);
@@ -251,31 +223,6 @@ function generateScalarMockFn(source: GateSource): string {
   return `    function ${fnName}(Solgate.Gate memory gate, ${solType} value) internal {
         ${mockCall};
     }`;
-}
-
-function generateListScalarMockFn(source: GateSource): string {
-  const elemType = source.type.elementType!;
-  const solType = gateTypeToSolidity(elemType);
-  const fnName = `mock${pascalCase(source.name)}`;
-
-  let body = "";
-  body += `    function ${fnName}(Solgate.Gate memory gate, ${solType}[] memory values) internal {\n`;
-  body += `        string memory json = "[";\n`;
-  body += `        for (uint256 i = 0; i < values.length; i++) {\n`;
-  body += `            if (i > 0) json = string.concat(json, ",");\n`;
-
-  if (isJsonQuoted(elemType)) {
-    body += `            json = string.concat(json, '"', VM.toString(values[i]), '"');\n`;
-  } else {
-    body += `            json = string.concat(json, VM.toString(values[i]));\n`;
-  }
-
-  body += `        }\n`;
-  body += `        json = string.concat(json, "]");\n`;
-  body += `        gate.mockRaw("${source.name}", json);\n`;
-  body += `    }`;
-
-  return body;
 }
 
 // ─── ABI helpers ───
@@ -330,105 +277,82 @@ function normalizeEventSig(sig: string): string {
   return `${name}(${params})`;
 }
 
-// ─── Main codegen ───
+// ─── Source block renderer ───
 
-export function generateSolidity(gate: ParsedGate, gateName: string): string {
-  const libName = `${pascalCase(gateName)}Mocks`;
-
-  let sol = `// Auto-generated by solgate from ${gateName}.gate\n`;
-  sol += `// DO NOT EDIT — re-run \`solgate codegen\` to regenerate\n`;
-  sol += `// SPDX-License-Identifier: MIT\n`;
-  sol += `pragma solidity ^0.8.0;\n\n`;
-  sol += `import {Vm} from "forge-std/Vm.sol";\n`;
-  sol += `import {Solgate} from "solgate/Solgate.sol";\n\n`;
-  sol += `library ${libName} {\n`;
-  sol += `    using Solgate for Solgate.Gate;\n\n`;
-  sol += `    Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));\n\n`;
-
-  // Params
-  if (gate.params.length > 0) {
-    sol += `    // ─── Params ───\n\n`;
-    for (const param of gate.params) {
-      const solType = gateTypeToSolidity(param.type);
-      const fnName = `set${pascalCase(param.name)}`;
-      sol += `    function ${fnName}(Solgate.Gate memory gate, ${solType} value) internal {\n`;
-      sol += `        gate.setParam("${param.name}", value);\n`;
-      sol += `    }\n\n`;
-    }
+function renderSourceBlock(source: GateSource): string {
+  if (source.type.kind === "map") {
+    return `    // ${source.name}: [map type — not directly translatable to Solidity]\n\n`;
   }
 
-  // ─── Helper for emitting a list<tuple> source ───
-  function emitTupleListSource(
-    source: GateSource,
-    sig: string | undefined
-  ): void {
+  let block = `    // ${source.name}: ${formatGateType(source.type)}\n`;
+  const sig = source.eventSignature ?? source.callSignature;
+  if (sig) {
+    block += `    // From: ${sig}\n`;
+  }
+
+  if (source.kind === "Events" && source.eventSignature) {
+    const normalized = normalizeEventSig(source.eventSignature);
+    const constName = camelToScreamingSnake(source.name) + "_SELECTOR";
+    block += `    bytes32 constant ${constName} = keccak256("${normalized}");\n\n`;
+  }
+
+  if (source.type.kind === "list" && source.type.elementType?.kind === "tuple") {
     const sName = structName(source.name);
     const fields = source.type.elementType!.fields!;
     const fieldNames = extractFieldNames(fields.length, sig);
 
     const structs: CollectedStruct[] = [];
     collectStructDefs(sName, fields, fieldNames, structs);
-    for (const s of structs) sol += s.definition + "\n\n";
+    for (const s of structs) block += s.definition + "\n\n";
 
     const fnName = `mock${pascalCase(source.name)}`;
-    sol += `    function ${fnName}(Solgate.Gate memory gate, ${sName}[] memory entries) internal {\n`;
-    sol += generateSerializeBody(source.name, sName, fields, sig);
-    sol += `\n    }\n\n`;
+    block += `    function ${fnName}(Solgate.Gate memory gate, ${sName}[] memory entries) internal {\n`;
+    block += generateSerializeBody(source.name, fields, sig);
+    block += `    }\n\n`;
+  } else if (source.type.kind === "primitive") {
+    block += generateScalarMockFn(source) + "\n\n";
+  } else if (source.type.kind === "list" && source.type.elementType?.kind === "primitive") {
+    const elemType = source.type.elementType;
+    const elemExpr = isJsonQuoted(elemType)
+      ? `'"', VM.toString(values[i]), '"'`
+      : `VM.toString(values[i])`;
+    block += ejs.render(LIST_SCALAR_FN_TEMPLATE, {
+      fnName: `mock${pascalCase(source.name)}`,
+      solType: gateTypeToSolidity(elemType),
+      elemExpr,
+      sourceName: source.name,
+    });
   }
 
-  // Event sources
-  const eventSources = gate.sources.filter((s) => s.kind === "Events");
-  if (eventSources.length > 0) {
-    sol += `    // ─── Event Sources ───\n\n`;
-    for (const source of eventSources) {
-      if (source.type.kind === "map") {
-        sol += `    // ${source.name}: [map type — not directly translatable to Solidity]\n\n`;
-        continue;
-      }
-      sol += `    // ${source.name}: ${formatGateType(source.type)}\n`;
-      if (source.eventSignature) {
-        sol += `    // From: ${source.eventSignature}\n`;
-        const normalized = normalizeEventSig(source.eventSignature);
-        const constName = camelToScreamingSnake(source.name) + "_SELECTOR";
-        sol += `    bytes32 constant ${constName} = keccak256("${normalized}");\n\n`;
-      }
+  return block;
+}
 
-      if (source.type.kind === "list" && source.type.elementType?.kind === "tuple") {
-        emitTupleListSource(source, source.eventSignature);
-      } else if (source.type.kind === "primitive") {
-        sol += generateScalarMockFn(source) + "\n\n";
-      } else if (source.type.kind === "list" && source.type.elementType?.kind === "primitive") {
-        sol += generateListScalarMockFn(source) + "\n\n";
-      }
-    }
-  }
+// ─── Main codegen ───
 
-  // Call sources
-  const callSources = gate.sources.filter((s) => s.kind === "Call");
-  if (callSources.length > 0) {
-    sol += `    // ─── Call Sources ───\n\n`;
-    for (const source of callSources) {
-      if (source.type.kind === "map") {
-        sol += `    // ${source.name}: [map type — not directly translatable to Solidity]\n\n`;
-        continue;
-      }
-      sol += `    // ${source.name}: ${formatGateType(source.type)}\n`;
-      if (source.callSignature) {
-        sol += `    // From: ${source.callSignature}\n`;
-      }
+interface ParamData {
+  name: string;
+  fnName: string;
+  solType: string;
+}
 
-      if (source.type.kind === "primitive") {
-        sol += generateScalarMockFn(source) + "\n\n";
-      } else if (source.type.kind === "list" && source.type.elementType?.kind === "tuple") {
-        emitTupleListSource(source, source.callSignature);
-      } else if (source.type.kind === "list" && source.type.elementType?.kind === "primitive") {
-        sol += generateListScalarMockFn(source) + "\n\n";
-      }
-    }
-  }
+export function generateSolidity(gate: ParsedGate, gateName: string): string {
+  const libName = `${pascalCase(gateName)}Mocks`;
 
-  sol += `}\n`;
-  return sol;
+  const params: ParamData[] = gate.params.map((param) => ({
+    name: param.name,
+    fnName: `set${pascalCase(param.name)}`,
+    solType: gateTypeToSolidity(param.type),
+  }));
+
+  const eventSources = gate.sources
+    .filter((s) => s.kind === "Events")
+    .map(renderSourceBlock);
+
+  const callSources = gate.sources
+    .filter((s) => s.kind === "Call")
+    .map(renderSourceBlock);
+
+  return ejs.render(LIBRARY_TEMPLATE, { gateName, libName, params, eventSources, callSources });
 }
 
 function formatGateType(t: GatelangType): string {

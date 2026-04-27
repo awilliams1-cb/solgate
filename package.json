@@ -26,9 +26,11 @@
   },
   "homepage": "https://github.com/awilliams1-cb/solgate#readme",
   "dependencies": {
+    "ejs": "^5.0.2",
     "viem": "^2.48.4"
   },
   "devDependencies": {
+    "@types/ejs": "^3.1.5",
     "@types/node": "^25.6.0",
     "tsup": "^8.5.1",
     "tsx": "^4.21.0",

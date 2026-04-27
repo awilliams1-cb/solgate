@@ -99,13 +99,10 @@ library Solgate {
         VM.serializeString(REQUEST_OBJ, "paramsJson", paramsJson);
         string memory requestJson = VM.serializeString(REQUEST_OBJ, "mocksJson", mocksJson);
 
-        // Pass the request JSON directly as an FFI argument — no file I/O.
-        // Foundry's FFI uses execvp (no shell), so we don't need to escape.
-        string[] memory cmd = new string[](4);
-        cmd[0] = "bun";
-        cmd[1] = "cli/index.ts";
-        cmd[2] = "validate";
-        cmd[3] = requestJson;
+        string[] memory cmd = new string[](3);
+        cmd[0] = "solgate";
+        cmd[1] = "validate";
+        cmd[2] = requestJson;
 
         bytes memory ffiResult = VM.ffi(cmd);
 

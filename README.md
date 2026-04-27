@@ -129,7 +129,7 @@ contract MyInvariantTest is Test {
 ### 3. Run the tests
 
 ```sh
-HEXAGATE_API_KEY=your_key forge test --profile ffi
+HEXAGATE_API_KEY=your_key FOUNDRY_PROFILE=ffi forge test
 ```
 
 ## Security
@@ -139,7 +139,7 @@ HEXAGATE_API_KEY=your_key forge test --profile ffi
 Do not enable FFI in your default profile. Instead, keep it in a separate profile as shown above and opt in explicitly when running gate tests:
 
 ```sh
-HEXAGATE_API_KEY=<your_key> forge test --profile ffi --match-contract MyInvariantTest
+HEXAGATE_API_KEY=<your_key> FOUNDRY_PROFILE=ffi forge test --match-contract MyInvariantTest
 ```
 
 This way, your standard `forge test` run never has FFI enabled, and you retain full visibility over when shell access is granted.

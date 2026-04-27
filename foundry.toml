@@ -7,3 +7,4 @@ libs = ["lib"]
 
 [profile.ffi]
 ffi = true
+test = "fault-proofs-example/tests"

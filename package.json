@@ -1,0 +1,37 @@
+{
+  "name": "solgate",
+  "version": "0.0.1",
+  "description": "CLI for custom Gate monitor testing",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "solgate": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup cli/index.ts --format esm --outDir dist",
+    "dev": "tsx cli/index.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/awilliams1-cb/solgate.git"
+  },
+  "author": "awilliams1-cb",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/awilliams1-cb/solgate/issues"
+  },
+  "homepage": "https://github.com/awilliams1-cb/solgate#readme",
+  "dependencies": {
+    "viem": "^2.48.4"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "tsup": "^8.5.1",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  }
+}

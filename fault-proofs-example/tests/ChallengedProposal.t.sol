@@ -2,8 +2,8 @@
 pragma solidity ^0.8.0;
 
 import {Test} from "forge-std/Test.sol";
-import {Solgate} from "../src/Solgate.sol";
-import {SolgateResult, GateResult} from "../src/SolgateResult.sol";
+import {Solgate} from "solgate/Solgate.sol";
+import {SolgateResult, GateResult} from "solgate/SolgateResult.sol";
 import {ChallengedProposalMocks as Mocks} from "../generated/ChallengedProposalMocks.sol";
 
 contract ChallengedProposalTest is Test {
@@ -19,7 +19,7 @@ contract ChallengedProposalTest is Test {
 
     function setUp() public {
         gate = Solgate.create()
-            .setGateFile("examples/challenged_proposal.gate")
+            .setGateFile("fault-proofs-example/gate/challenged_proposal.gate")
             .setChainId(1)
             .enableTrace();
 

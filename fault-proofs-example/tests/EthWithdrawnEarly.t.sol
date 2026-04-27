@@ -2,8 +2,8 @@
 pragma solidity ^0.8.0;
 
 import {Test} from "forge-std/Test.sol";
-import {Solgate} from "../src/Solgate.sol";
-import {SolgateResult, GateResult} from "../src/SolgateResult.sol";
+import {Solgate} from "solgate/Solgate.sol";
+import {SolgateResult, GateResult} from "solgate/SolgateResult.sol";
 import {EthWithdrawnEarlyMocks as Mocks} from "../generated/EthWithdrawnEarlyMocks.sol";
 
 contract EthWithdrawnEarlyTest is Test {
@@ -21,7 +21,7 @@ contract EthWithdrawnEarlyTest is Test {
 
     function setUp() public {
         gate = Solgate.create()
-            .setGateFile("examples/eth_withdrawn_early.gate")
+            .setGateFile("fault-proofs-example/gate/eth_withdrawn_early.gate")
             .setChainId(1)
             .enableTrace();
         gate.setMulticall3(MULTICALL3);

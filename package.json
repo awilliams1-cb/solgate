@@ -13,7 +13,7 @@
   "scripts": {
     "build": "tsup cli/index.ts --format esm --outDir dist",
     "dev": "tsx cli/index.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "vitest run"
   },
   "repository": {
     "type": "git",
@@ -32,6 +32,7 @@
     "@types/node": "^25.6.0",
     "tsup": "^8.5.1",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.5"
   }
 }
